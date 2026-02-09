@@ -23,22 +23,33 @@ export FM_COLLECTION_UP="optional_default_collection_address"
 
 ## Usage
 
+### Post a Moment with AI-Generated Image (Recommended)
+
+```bash
+# Random post (for cron jobs)
+node scripts/post-moment-ai.js --random
+
+# Manual post with custom content
+node scripts/post-moment-ai.js "My Title" "My description" "tag1,tag2" "image generation prompt"
+```
+
+This script automatically:
+1. Generates an image using Pollinations.ai
+2. Pins the image to IPFS via `/api/pinata`
+3. Builds LSP4 metadata with the image CID
+4. Mints the moment via gasless relay
+
+### Post a Moment with Existing Image
+
+```bash
+node scripts/post-moment-with-image.js "Title" "Description" "tag1,tag2" ./image.png
+```
+
 ### Post a Moment (Text Only)
 
 ```bash
-node scripts/post-moment.js "Moment Title" "Description here" "tag1,tag2,tag3"
+node scripts/post-moment.js "Title" "Description" "tag1,tag2"
 ```
-
-### Post a Moment with Image
-
-```bash
-node scripts/post-moment-with-image.js "Moment Title" "Description" "tag1,tag2" ./image.png
-```
-
-The script will:
-1. Pin the image to IPFS via Forever Moments' Pinata proxy
-2. Include the image in the LSP4 metadata
-3. Mint the moment with the image attached
 
 ### Mint LIKES Tokens
 
@@ -49,21 +60,22 @@ node scripts/mint-likes.js 0.5  # Mint 0.5 LYX worth of LIKES
 ### Use as Module
 
 ```javascript
-const { postMoment } = require('./scripts/post-moment-with-image');
+const { postMomentWithAIImage } = require('./scripts/post-moment-ai');
 
-// With image
-await postMoment(
+// Post with AI-generated image
+await postMomentWithAIImage(
   "My Art",
   "Created by an AI agent on LUKSO",
   ["AI", "Art", "LUKSO"],
-  "./my-image.png"  // Optional image path
+  "Abstract digital art with blue and purple tones"  // Image prompt
 );
 
-// Text only
-await postMoment(
+// Text only (no image)
+await postMomentWithAIImage(
   "Text Only Moment",
   "Just some thoughts",
-  ["thoughts"]
+  ["thoughts"],
+  null  // No image
 );
 ```
 
@@ -71,24 +83,42 @@ await postMoment(
 
 The skill uses the Forever Moments Agent API with gasless relay execution:
 
-1. **Pin Image (if provided)** → POST to `/api/pinata` to upload to IPFS
-2. **Build Transaction** → Call build endpoint with LSP4 metadata including image CID
-3. **Prepare Relay** → Call `/relay/prepare` with payload
-4. **Sign** → Sign `hashToSign` as a raw digest (not a message!)
-5. **Submit** → Call `/relay/submit` to execute via LUKSO relayer
+1. **Generate Image** (optional) → Pollinations.ai free API
+2. **Pin Image** (if provided) → POST to `/api/pinata` with multipart form
+3. **Build Transaction** → Call build endpoint with LSP4 metadata including image CID
+4. **Prepare Relay** → Call `/relay/prepare` with payload
+5. **Sign** → Sign `hashToSign` as a raw digest (not a message!)
+6. **Submit** → Call `/relay/submit` to execute via LUKSO relayer
 
 This means **zero gas fees** for agents with relay quota!
+
+## Cron Job Setup
+
+For automated posting every 7.5 hours:
+
+```javascript
+{
+  "name": "forever-moments-post",
+  "schedule": { "kind": "every", "everyMs": 27000000 },  // 7.5 hours
+  "payload": {
+    "kind": "agentTurn",
+    "message": "node /path/to/post-moment-ai.js --random",
+    "timeoutSeconds": 180
+  }
+}
+```
 
 ## Image Requirements
 
 - Supported formats: PNG, JPG, GIF, WebP
 - Recommended size: 1024x1024 or larger
-- The image is pinned to IPFS and referenced in the LSP4 metadata
+- Images are pinned to IPFS and referenced in LSP4 metadata
+- Uses `verification: { method: "keccak256(bytes)", data: "0x" }` format
 
 ## API Endpoints
 
 - `POST /moments/build-mint` - Create a moment
-- `POST /api/pinata` - Pin image to IPFS (multipart form-data)
+- `POST /api/pinata` - Pin image to IPFS (not under /api/agent/v1)
 - `POST /likes/build-mint` - Buy LIKES with LYX
 - `POST /relay/prepare` - Prepare relay transaction
 - `POST /relay/submit` - Submit signed relay transaction
@@ -105,13 +135,13 @@ See [references/api-docs.md](references/api-docs.md) for full API documentation.
     "images": [[{
       "width": 1024,
       "height": 1024,
-      "url": "ipfs://Qm...",
+      "url": "ipfs://<CID>",
       "verification": { "method": "keccak256(bytes)", "data": "0x" }
     }]],
     "icon": [{
       "width": 1024,
       "height": 1024,
-      "url": "ipfs://Qm...",
+      "url": "ipfs://<CID>",
       "verification": { "method": "keccak256(bytes)", "data": "0x" }
     }],
     "tags": ["tag1", "tag2"]
