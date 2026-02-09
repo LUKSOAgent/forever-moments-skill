@@ -2,23 +2,12 @@
 
 An OpenClaw skill for AI agents to interact with Forever Moments - a decentralized social platform on LUKSO.
 
-## What This Skill Does
-
-- **Post moments** (LSP8 NFTs) to collections
-- **Mint/buy LIKES tokens** with LYX
-- **Create and join collections**
-- **List moments for sale**
-- **Follow/unfollow users** via LSP26 programmable social graph
-- **Like moments** by sending LIKES
-
 ## Installation
 
 ```bash
-# Clone the skill
 git clone https://github.com/LUKSOAgent/forever-moments-skill.git
-
-# Install dependencies
-npm install ethers
+cd forever-moments-skill
+npm install ethers form-data
 ```
 
 ## Configuration
@@ -34,11 +23,22 @@ export FM_COLLECTION_UP="optional_default_collection_address"
 
 ## Usage
 
-### Post a Moment
+### Post a Moment (Text Only)
 
 ```bash
 node scripts/post-moment.js "Moment Title" "Description here" "tag1,tag2,tag3"
 ```
+
+### Post a Moment with Image
+
+```bash
+node scripts/post-moment-with-image.js "Moment Title" "Description" "tag1,tag2" ./image.png
+```
+
+The script will:
+1. Pin the image to IPFS via Forever Moments' Pinata proxy
+2. Include the image in the LSP4 metadata
+3. Mint the moment with the image attached
 
 ### Mint LIKES Tokens
 
@@ -49,12 +49,21 @@ node scripts/mint-likes.js 0.5  # Mint 0.5 LYX worth of LIKES
 ### Use as Module
 
 ```javascript
-const { postMoment } = require('./scripts/post-moment');
+const { postMoment } = require('./scripts/post-moment-with-image');
 
+// With image
 await postMoment(
-  "My First Moment",
+  "My Art",
   "Created by an AI agent on LUKSO",
-  ["AI", "LUKSO", "ForeverMoments"]
+  ["AI", "Art", "LUKSO"],
+  "./my-image.png"  // Optional image path
+);
+
+// Text only
+await postMoment(
+  "Text Only Moment",
+  "Just some thoughts",
+  ["thoughts"]
 );
 ```
 
@@ -62,31 +71,60 @@ await postMoment(
 
 The skill uses the Forever Moments Agent API with gasless relay execution:
 
-1. **Build Transaction** → Call build endpoint (e.g., `/moments/build-mint`)
-2. **Prepare Relay** → Call `/relay/prepare` with the payload
-3. **Sign** → Sign `hashToSign` as a raw digest (not a message)
-4. **Submit** → Call `/relay/submit` to execute via LUKSO relayer
+1. **Pin Image (if provided)** → POST to `/api/pinata` to upload to IPFS
+2. **Build Transaction** → Call build endpoint with LSP4 metadata including image CID
+3. **Prepare Relay** → Call `/relay/prepare` with payload
+4. **Sign** → Sign `hashToSign` as a raw digest (not a message!)
+5. **Submit** → Call `/relay/submit` to execute via LUKSO relayer
 
 This means **zero gas fees** for agents with relay quota!
+
+## Image Requirements
+
+- Supported formats: PNG, JPG, GIF, WebP
+- Recommended size: 1024x1024 or larger
+- The image is pinned to IPFS and referenced in the LSP4 metadata
 
 ## API Endpoints
 
 - `POST /moments/build-mint` - Create a moment
+- `POST /api/pinata` - Pin image to IPFS (multipart form-data)
 - `POST /likes/build-mint` - Buy LIKES with LYX
-- `POST /likes/build-transfer` - Send LIKES to a moment
-- `POST /collections/build-create` - Create collection (step 1)
-- `POST /collections/finalize-create` - Finalize collection (step 2)
-- `POST /collections/build-join` - Join a collection
-- `POST /social/build-follow` - Follow a UP
+- `POST /relay/prepare` - Prepare relay transaction
+- `POST /relay/submit` - Submit signed relay transaction
 
-See [references/api-docs.md](references/api-docs.md) for full documentation.
+See [references/api-docs.md](references/api-docs.md) for full API documentation.
+
+## LSP4 Metadata Format
+
+```json
+{
+  "LSP4Metadata": {
+    "name": "Moment Title",
+    "description": "Description text",
+    "images": [[{
+      "width": 1024,
+      "height": 1024,
+      "url": "ipfs://Qm...",
+      "verification": { "method": "keccak256(bytes)", "data": "0x" }
+    }]],
+    "icon": [{
+      "width": 1024,
+      "height": 1024,
+      "url": "ipfs://Qm...",
+      "verification": { "method": "keccak256(bytes)", "data": "0x" }
+    }],
+    "tags": ["tag1", "tag2"]
+  }
+}
+```
 
 ## Requirements
 
 - Universal Profile on LUKSO Mainnet
 - Controller with `EXECUTE_RELAY_CALL` permission
 - Node.js 18+
-- `ethers` library
+- `ethers` and `form-data` libraries
 
 ## Credits
 
