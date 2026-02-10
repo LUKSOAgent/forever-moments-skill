@@ -19,36 +19,42 @@ export FM_PRIVATE_KEY="your_controller_private_key"
 export FM_UP_ADDRESS="your_universal_profile_address"
 export FM_CONTROLLER_ADDRESS="your_controller_address"
 export FM_COLLECTION_UP="optional_default_collection_address"
+
+# Optional: For DALL-E 3 premium image generation
+export DALLE_API_KEY="your_openai_api_key"
 ```
+
+## Image Generation Options
+
+### Scheduled Posts (Cron) - FREE
+Uses **Pollinations.ai** - unlimited, free image generation. Perfect for automated posting.
+
+### Manual Posts - Premium Option
+Uses **DALL-E 3** - higher quality images. Costs ~$0.04 per image.
 
 ## Usage
 
-### Post a Moment with AI-Generated Image (Recommended)
+### Post with AI Image - Scheduled/Cron (FREE)
 
 ```bash
-# Random post (for cron jobs)
+# Random post for cron jobs - uses Pollinations.ai (free)
 node scripts/post-moment-ai.js --random
 
-# Manual post with custom content
+# Manual post with Pollinations.ai (free)
 node scripts/post-moment-ai.js "My Title" "My description" "tag1,tag2" "image generation prompt"
 ```
 
-This script automatically:
-1. Generates an image using Pollinations.ai
-2. Pins the image to IPFS via `/api/pinata`
-3. Builds LSP4 metadata with the image CID
-4. Mints the moment via gasless relay
+### Post with DALL-E 3 - Premium Quality
 
-### Post a Moment with Existing Image
+```bash
+# Manual post with DALL-E 3 (requires DALLE_API_KEY)
+node scripts/post-moment-ai.js --dalle "My Title" "My description" "tag1,tag2" "detailed image prompt"
+```
+
+### Post with Existing Image
 
 ```bash
 node scripts/post-moment-with-image.js "Title" "Description" "tag1,tag2" ./image.png
-```
-
-### Post a Moment (Text Only)
-
-```bash
-node scripts/post-moment.js "Title" "Description" "tag1,tag2"
 ```
 
 ### Mint LIKES Tokens
@@ -62,20 +68,22 @@ node scripts/mint-likes.js 0.5  # Mint 0.5 LYX worth of LIKES
 ```javascript
 const { postMomentWithAIImage } = require('./scripts/post-moment-ai');
 
-// Post with AI-generated image
+// Scheduled/cron post (FREE Pollinations.ai)
 await postMomentWithAIImage(
   "My Art",
   "Created by an AI agent on LUKSO",
   ["AI", "Art", "LUKSO"],
-  "Abstract digital art with blue and purple tones"  // Image prompt
+  "Abstract digital art with blue and purple tones",  // Image prompt
+  false  // false = use Pollinations (free)
 );
 
-// Text only (no image)
+// Manual post with DALL-E 3 (Premium)
 await postMomentWithAIImage(
-  "Text Only Moment",
-  "Just some thoughts",
-  ["thoughts"],
-  null  // No image
+  "Premium Art",
+  "High quality AI-generated artwork",
+  ["AI", "Art"],
+  "A detailed futuristic cityscape with neon lights, photorealistic, 8k quality",
+  true  // true = use DALL-E 3
 );
 ```
 
@@ -83,7 +91,9 @@ await postMomentWithAIImage(
 
 The skill uses the Forever Moments Agent API with gasless relay execution:
 
-1. **Generate Image** (optional) → Pollinations.ai free API
+1. **Generate Image** (optional)
+   - **Pollinations.ai** (free) - For scheduled posts
+   - **DALL-E 3** (premium) - For high-quality manual posts
 2. **Pin Image** (if provided) → POST to `/api/pinata` with multipart form
 3. **Build Transaction** → Call build endpoint with LSP4 metadata including image CID
 4. **Prepare Relay** → Call `/relay/prepare` with payload
@@ -94,7 +104,7 @@ This means **zero gas fees** for agents with relay quota!
 
 ## Cron Job Setup
 
-For automated posting every 7.5 hours:
+For automated posting every 7.5 hours (uses FREE Pollinations.ai):
 
 ```javascript
 {
@@ -155,6 +165,7 @@ See [references/api-docs.md](references/api-docs.md) for full API documentation.
 - Controller with `EXECUTE_RELAY_CALL` permission
 - Node.js 18+
 - `ethers` and `form-data` libraries
+- OpenAI API key (optional, for DALL-E 3)
 
 ## Credits
 

@@ -2,13 +2,13 @@ const fetch = require('node-fetch');
 const fs = require('fs');
 const https = require('https');
 const { ethers } = require('ethers');
-const path = require('path');
 
-// Configuration - set these via environment variables or edit directly
+// Configuration
 const PRIVATE_KEY = process.env.FM_PRIVATE_KEY || 'YOUR_CONTROLLER_PRIVATE_KEY';
 const MY_UP = process.env.FM_UP_ADDRESS || 'YOUR_UP_ADDRESS';
 const CONTROLLER = process.env.FM_CONTROLLER_ADDRESS || 'YOUR_CONTROLLER_ADDRESS';
 const COLLECTION_UP = process.env.FM_COLLECTION_UP || '0x439f6793b10b0a9d88ad05293a074a8141f19d77';
+const DALLE_API_KEY = process.env.DALLE_API_KEY || 'YOUR_DALLE_API_KEY';
 
 const API_BASE = 'www.forevermoments.life';
 
@@ -33,28 +33,93 @@ function apiCall(path, method = 'GET', data = null) {
   });
 }
 
-// Pollinations.ai - free image generation
-async function generateImage(prompt, outputPath) {
-  console.log('🎨 Generating image...');
+// Pollinations.ai - FREE image generation (for cron/scheduled posts)
+async function generateImagePollinations(prompt, outputPath) {
+  console.log('🎨 Generating image with Pollinations.ai (FREE)...');
   console.log('Prompt:', prompt);
   
   const encodedPrompt = encodeURIComponent(prompt);
-  const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&seed=${Math.floor(Math.random() * 1000)}&nologo=true`;
+  const seed = Math.floor(Math.random() * 1000);
+  const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&seed=${seed}&nologo=true`;
   
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(outputPath);
-    https.get(url, (response) => {
+    const request = https.get(url, { timeout: 30000 }, (response) => {
+      if (response.statusCode === 429) {
+        file.close();
+        fs.unlink(outputPath, () => {});
+        reject(new Error('RATE_LIMITED'));
+        return;
+      }
       response.pipe(file);
       file.on('finish', () => {
         file.close();
         console.log('✅ Image saved to:', outputPath);
         resolve(outputPath);
       });
-    }).on('error', (err) => {
+    });
+    
+    request.on('timeout', () => {
+      request.destroy();
+      file.close();
+      fs.unlink(outputPath, () => {});
+      reject(new Error('TIMEOUT'));
+    });
+    
+    request.on('error', (err) => {
+      file.close();
       fs.unlink(outputPath, () => {});
       reject(err);
     });
   });
+}
+
+// DALL-E 3 - Premium image generation (for manual posts)
+async function generateImageDALLE(prompt, outputPath) {
+  console.log('🎨 Generating image with DALL-E 3 (Premium)...');
+  console.log('Prompt:', prompt);
+  
+  if (!DALLE_API_KEY || DALLE_API_KEY === 'YOUR_DALLE_API_KEY') {
+    throw new Error('DALLE_API_KEY not configured. Set it in environment variables.');
+  }
+  
+  const response = await fetch('https://api.openai.com/v1/images/generations', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${DALLE_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: 'dall-e-3',
+      prompt: prompt,
+      n: 1,
+      size: '1024x1024',
+      response_format: 'url'
+    })
+  });
+  
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`DALL-E API error: ${response.status} - ${error}`);
+  }
+  
+  const data = await response.json();
+  const imageUrl = data.data[0].url;
+  
+  // Download the image
+  const file = fs.createWriteStream(outputPath);
+  await new Promise((resolve, reject) => {
+    https.get(imageUrl, (res) => {
+      res.pipe(file);
+      file.on('finish', () => {
+        file.close();
+        console.log('✅ DALL-E image saved to:', outputPath);
+        resolve();
+      });
+    }).on('error', reject);
+  });
+  
+  return outputPath;
 }
 
 async function pinImageToIPFS(imagePath) {
@@ -118,25 +183,45 @@ async function relayExecute(payload, description) {
   return relaySubmit;
 }
 
-async function postMomentWithAIImage(name, description, tags = [], imagePrompt = null) {
+async function postMomentWithAIImage(name, description, tags = [], imagePrompt = null, useDALLE = false) {
   console.log('🎯 POSTING TO FOREVER MOMENTS WITH AI IMAGE');
   console.log('===========================================\n');
   
   let imageCid = null;
   let tempImagePath = null;
+  let imageSource = 'none';
   
   // Generate and pin image if prompt provided
   if (imagePrompt) {
+    tempImagePath = `/tmp/fm_${Date.now()}.png`;
+    
     try {
-      tempImagePath = `/tmp/fm_${Date.now()}.png`;
-      await generateImage(imagePrompt, tempImagePath);
-      imageCid = await pinImageToIPFS(tempImagePath);
+      if (useDALLE) {
+        // Use DALL-E 3 for premium manual posts
+        await generateImageDALLE(imagePrompt, tempImagePath);
+        imageSource = 'dalle';
+      } else {
+        // Use Pollinations.ai for free scheduled posts
+        await generateImagePollinations(imagePrompt, tempImagePath);
+        imageSource = 'pollinations';
+      }
       
+      imageCid = await pinImageToIPFS(tempImagePath);
+    } catch (e) {
+      console.error('❌ Image generation failed:', e.message);
+      if (useDALLE && e.message.includes('not configured')) {
+        console.log('💡 Falling back to Pollinations.ai (free)...');
+        try {
+          await generateImagePollinations(imagePrompt, tempImagePath);
+          imageCid = await pinImageToIPFS(tempImagePath);
+          imageSource = 'pollinations';
+        } catch (fallbackErr) {
+          console.error('❌ Fallback also failed:', fallbackErr.message);
+        }
+      }
+    } finally {
       // Cleanup temp file
       fs.unlink(tempImagePath, () => {});
-    } catch (e) {
-      console.error('Failed to generate/pin image:', e.message);
-      console.log('Continuing without image...');
     }
   }
   
@@ -164,7 +249,10 @@ async function postMomentWithAIImage(name, description, tags = [], imagePrompt =
   };
   
   console.log(`\nContent: "${name}"`);
-  if (imageCid) console.log(`Image CID: ipfs://${imageCid}`);
+  if (imageCid) {
+    console.log(`Image CID: ipfs://${imageCid}`);
+    console.log(`Image Source: ${imageSource}`);
+  }
   console.log('Building mint transaction...');
   
   const mintResult = await apiCall('/moments/build-mint', 'POST', {
@@ -185,6 +273,7 @@ async function postMomentWithAIImage(name, description, tags = [], imagePrompt =
     console.log('\n🎉 SUCCESS! Moment minted!');
     console.log('Transaction:', responseData.transactionHash);
     if (imageCid) console.log('Image CID:', imageCid);
+    if (imageSource !== 'none') console.log(`Image: ${imageSource === 'dalle' ? 'DALL-E 3 (Premium)' : 'Pollinations.ai (Free)'}`);
     return responseData.transactionHash;
   } else {
     console.error('❌ Mint failed:', mintSubmit?.error || 'Unknown error');
@@ -192,7 +281,7 @@ async function postMomentWithAIImage(name, description, tags = [], imagePrompt =
   }
 }
 
-// Post options for cron job
+// Post options for cron job (FREE Pollinations.ai)
 const POST_OPTIONS = [
   {
     name: "LUKSO Daily",
@@ -230,10 +319,10 @@ const POST_OPTIONS = [
 if (require.main === module) {
   const args = process.argv.slice(2);
   
-  // Random post mode (for cron job)
+  // Random post mode (for cron job) - uses FREE Pollinations.ai
   if (args[0] === '--random') {
     const post = POST_OPTIONS[Math.floor(Math.random() * POST_OPTIONS.length)];
-    postMomentWithAIImage(post.name, post.description, post.tags, post.imagePrompt)
+    postMomentWithAIImage(post.name, post.description, post.tags, post.imagePrompt, false) // false = use Pollinations (free)
       .then(tx => {
         if (tx) process.exit(0);
         else process.exit(1);
@@ -242,18 +331,25 @@ if (require.main === module) {
         console.error(err);
         process.exit(1);
       });
+  } else if (args[0] === '--dalle') {
+    // Manual post with DALL-E 3 (premium)
+    const [_, name, description, tagsStr, imagePrompt] = args;
+    const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()) : [];
+    postMomentWithAIImage(name, description, tags, imagePrompt, true) // true = use DALL-E
+      .catch(console.error);
   } else if (args.length >= 2) {
-    // Manual mode
+    // Manual post with Pollinations (free, default)
     const [name, description, tagsStr, imagePrompt] = args;
     const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()) : [];
-    postMomentWithAIImage(name, description, tags, imagePrompt)
+    postMomentWithAIImage(name, description, tags, imagePrompt, false)
       .catch(console.error);
   } else {
     console.log('Usage:');
-    console.log('  node post-moment-ai.js --random                    # Random post (for cron)');
-    console.log('  node post-moment-ai.js "Name" "Description" "tags" "image prompt"');
+    console.log('  node post-moment-ai.js --random                           # Random post (cron, FREE Pollinations)');
+    console.log('  node post-moment-ai.js "Name" "Description" "tags" "prompt" # Manual (FREE Pollinations)');
+    console.log('  node post-moment-ai.js --dalle "Name" "Desc" "tags" "prompt" # Manual (DALL-E 3 Premium)');
     process.exit(1);
   }
 }
 
-module.exports = { postMomentWithAIImage, POST_OPTIONS, generateImage, pinImageToIPFS };
+module.exports = { postMomentWithAIImage, POST_OPTIONS, generateImagePollinations, generateImageDALLE, pinImageToIPFS };
