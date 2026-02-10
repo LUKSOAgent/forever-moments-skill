@@ -319,10 +319,10 @@ const POST_OPTIONS = [
 if (require.main === module) {
   const args = process.argv.slice(2);
   
-  // Random post mode (for cron job) - uses FREE Pollinations.ai
+  // Random post mode (for cron job) - uses DALL-E 3 (premium)
   if (args[0] === '--random') {
     const post = POST_OPTIONS[Math.floor(Math.random() * POST_OPTIONS.length)];
-    postMomentWithAIImage(post.name, post.description, post.tags, post.imagePrompt, false) // false = use Pollinations (free)
+    postMomentWithAIImage(post.name, post.description, post.tags, post.imagePrompt, true) // true = use DALL-E 3
       .then(tx => {
         if (tx) process.exit(0);
         else process.exit(1);
@@ -331,23 +331,23 @@ if (require.main === module) {
         console.error(err);
         process.exit(1);
       });
-  } else if (args[0] === '--dalle') {
-    // Manual post with DALL-E 3 (premium)
+  } else if (args[0] === '--pollinations') {
+    // Manual post with Pollinations.ai (free)
     const [_, name, description, tagsStr, imagePrompt] = args;
+    const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()) : [];
+    postMomentWithAIImage(name, description, tags, imagePrompt, false) // false = use Pollinations
+      .catch(console.error);
+  } else if (args.length >= 2) {
+    // Manual post with DALL-E 3 (default)
+    const [name, description, tagsStr, imagePrompt] = args;
     const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()) : [];
     postMomentWithAIImage(name, description, tags, imagePrompt, true) // true = use DALL-E
       .catch(console.error);
-  } else if (args.length >= 2) {
-    // Manual post with Pollinations (free, default)
-    const [name, description, tagsStr, imagePrompt] = args;
-    const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()) : [];
-    postMomentWithAIImage(name, description, tags, imagePrompt, false)
-      .catch(console.error);
   } else {
     console.log('Usage:');
-    console.log('  node post-moment-ai.js --random                           # Random post (cron, FREE Pollinations)');
-    console.log('  node post-moment-ai.js "Name" "Description" "tags" "prompt" # Manual (FREE Pollinations)');
-    console.log('  node post-moment-ai.js --dalle "Name" "Desc" "tags" "prompt" # Manual (DALL-E 3 Premium)');
+    console.log('  node post-moment-ai.js --random                           # Random post (cron, DALL-E 3)');
+    console.log('  node post-moment-ai.js "Name" "Description" "tags" "prompt" # Manual (DALL-E 3)');
+    console.log('  node post-moment-ai.js --pollinations "Name" "Desc" "tags" "prompt" # Manual (Pollinations FREE)');
     process.exit(1);
   }
 }
